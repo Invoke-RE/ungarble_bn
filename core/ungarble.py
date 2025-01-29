@@ -16,19 +16,20 @@ class EmulateLocationsWrapper(QObject):
         super().__init__()
         self.task = None
     
-    def start(self, locations, data):
-        self.task = EmulateLocations(locations, data)
+    def start(self, locations, data, base):
+        self.task = EmulateLocations(locations, data, base)
         self.task.update_ui_signal = self.update_ui_signal
         self.task.start()
 
 class EmulateLocations(BackgroundTaskThread):
     update_ui_signal = None
 
-    def __init__(self, locations, data):
+    def __init__(self, locations, data, base):
         BackgroundTaskThread.__init__(self, "Emulating Locations...", True)
         self.locations = locations
         self.data = data
         self.done = False
+        self.base = base
 
     def run(self):
         self.emulate_locations()
@@ -40,7 +41,7 @@ class EmulateLocations(BackgroundTaskThread):
                 logger.log_info(f"Emulating 0x{location['start']:2x}")
                 if self.cancelled:
                     break
-                eresult = self.run_vstack(self.data, location['start'], location['end'])
+                eresult = self.run_vstack(self.data, location['start'], location['end'], self.base)
                 logger.log_info(f"Emulation result 0x{location['start']:2x} // result: {eresult}")
                 self.update_ui_signal.emit(location['start'], location['end'], eresult, i)
             self.progress = f"{i+1}/{total_targets} target ranges emulated"
@@ -62,12 +63,12 @@ class EmulateLocations(BackgroundTaskThread):
     # call completes, -L allows partial matches of string outputs and -s provides
     # the starting address for emulation. <3 to @huettenhain for letting
     # me avoid writing yet another Unicorn wrapper.
-    def run_vstack(self, data, start_address, stop_address):
+    def run_vstack(self, data, start_address, stop_address, base_address):
         #result = data | self.load_pipeline(f"vstack -W -c -L -s={stop_address} {start_address} | carve printable -n 8") | bytes
         if start_address > stop_address:
             logger.log_error(f"{start_address:2x} larger than {stop_address:2x}")
             return ""
-        result = data | self.load_pipeline(f"vstack -C -s={stop_address} {start_address} | carve printable -n 8") | bytes
+        result = data | self.load_pipeline(f"vstack -C -s={stop_address} {start_address} -b {base_address} | carve printable -n 8") | bytes
         rstr = result.decode('ascii')
         return rstr
 
@@ -300,7 +301,9 @@ class FindLocations(BackgroundTaskThread):
                 #logger.log_info(f"0x{caller.address:2x} has one start location")
                 self.update_ui_signal.emit(raddr[0], caller.address)
             elif len(raddr) > 1:
-                #logger.log_info(f"0x{caller.address:2x} has more than one start location")
+                logger.log_info(f"0x{caller.address:2x} has more than one start location:")
+                for addr in raddr:
+                    logger.log_info(f"0x{addr:2x}")
                 self.update_ui_signal.emit(raddr[1], caller.address)
 
         self.finished.emit()
@@ -333,8 +336,8 @@ class Ungarble():
     # the starting address for emulation. <3 to @huettenhain for letting
     # me avoid writing yet another Unicorn wrapper.
     @staticmethod
-    def run_vstack(data, start_address, stop_address):
+    def run_vstack(data, start_address, stop_address, base_address):
         from refinery.lib.loader import load_pipeline
-        result = data | load_pipeline(f"vstack -W -c -L -s={stop_address} {start_address} | carve printable -n 9") | bytes
+        result = data | load_pipeline(f"vstack -W -c -L -s={stop_address} {start_address} -b {base_address} | carve printable -n 9") | bytes
         rstr = result.decode('ascii')
         return rstr
